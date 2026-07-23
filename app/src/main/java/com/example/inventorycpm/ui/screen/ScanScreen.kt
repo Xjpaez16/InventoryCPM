@@ -352,13 +352,11 @@ fun ScanScreen(
             // ── Loading overlay ──────────────────────────────────────────
             if (uiState is ScanUiState.Loading) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.6f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Surface(
-                        color = Color.Black.copy(alpha = 0.7f),
-                        modifier = Modifier.fillMaxSize()
-                    ) {}
                     Card(
                         colors = CardDefaults.cardColors(containerColor = SurfaceDark),
                         shape = RoundedCornerShape(20.dp),

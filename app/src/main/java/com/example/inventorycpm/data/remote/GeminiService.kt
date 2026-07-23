@@ -1,7 +1,9 @@
 package com.example.inventorycpm.data.remote
 
+import android.util.Log
 import com.example.inventorycpm.BuildConfig
 import com.example.inventorycpm.data.remote.model.ParsedInvoiceItemDto
+import com.example.inventorycpm.util.ImageUtil
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonSyntaxException
@@ -12,55 +14,60 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
+import java.io.IOException
 import java.math.BigDecimal
+import okhttp3.Dns
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
-/**
- * Servicio de escaneo de facturas usando Gemini 1.5 Flash (Vision).
- *
- * Responsabilidades:
- *  1. Codificar la imagen en Base64.
- *  2. Construir el payload JSON para la API de Gemini.
- *  3. Parsear la respuesta de texto libre a lista de [ParsedInvoiceItemDto].
- *  4. Manejar errores de parseo de forma robusta (JSON malformado, campos faltantes).
- *
- * NOTA: La API key se lee de BuildConfig (originada en local.properties, nunca hardcodeada).
- */
 class GeminiService {
+
+    private val ipv4Dns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            val addresses = Dns.SYSTEM.lookup(hostname)
+            // Prioritize IPv4 addresses to avoid IPv6 connection issues
+            val ipv4 = addresses.filterIsInstance<Inet4Address>()
+            return ipv4.ifEmpty { addresses }
+        }
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .dns(ipv4Dns)
         .build()
 
     private val gson = Gson()
-    private val apiKey = BuildConfig.GEMINI_API_KEY
+    private val apiKey = BuildConfig.GEMINI_API_KEY.trim()
 
-    /** Endpoint de Gemini 1.5 Flash con soporte de visión (imágenes). */
-    private val baseUrl =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+    private val baseUrl = "https://generativelanguage.googleapis.com/v1beta/interactions"
 
-    /**
-     * Procesa una imagen de factura y retorna los ítems extraídos.
-     *
-     * @param imageFile Archivo de imagen en almacenamiento interno de la app.
-     * @return [Result] con lista de [ParsedInvoiceItemDto] (puede incluir ítems con campos nulos
-     *         si la IA no pudo leerlos con certeza — la UI permite edición manual en ese caso).
-     */
     suspend fun scanInvoice(imageFile: File): Result<List<ParsedInvoiceItemDto>> =
         withContext(Dispatchers.IO) {
+            val totalStartTime = System.currentTimeMillis()
             try {
+                Log.d("GeminiService", "🚀 [PASO 1] Iniciando escaneo. Archivo: ${imageFile.name} (${imageFile.length() / 1024} KB)")
+
                 if (apiKey.isBlank()) {
+                    Log.e("GeminiService", "❌ API key vacía")
                     return@withContext Result.failure(
-                        IllegalStateException("API key de Gemini no configurada. Agrega GEMINI_API_KEY en local.properties.")
+                        IllegalStateException("API key de Gemini no configurada.")
                     )
                 }
 
-                val base64Image = android.util.Base64.encodeToString(
-                    imageFile.readBytes(),
-                    android.util.Base64.NO_WRAP
-                )
+                // 1. Optimización e imagen a Base64
+                val imgStartTime = System.currentTimeMillis()
+                Log.d("GeminiService", "🖼️ [PASO 2] Procesando e imprimiendo imagen...")
+                val bytes = ImageUtil.resizeAndCompressImage(imageFile)
+                    ?: imageFile.readBytes()
+
+                val base64Image = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                val imgDuration = System.currentTimeMillis() - imgStartTime
+                Log.d("GeminiService", "✅ Base64 completado en ${imgDuration}ms. Tamaño: ${base64Image.length / 1024} KB (${base64Image.length} caracteres)")
 
                 val mimeType = when (imageFile.extension.lowercase()) {
                     "png" -> "image/png"
@@ -68,36 +75,74 @@ class GeminiService {
                     else -> "image/jpeg"
                 }
 
+                // 2. Construcción de Payload
+                val payloadStartTime = System.currentTimeMillis()
+                Log.d("GeminiService", "📦 [PASO 3] Construyendo payload JSON...")
                 val payload = buildGeminiPayload(base64Image, mimeType)
                 val requestBody = payload.toRequestBody("application/json".toMediaType())
+                val payloadDuration = System.currentTimeMillis() - payloadStartTime
+                Log.d("GeminiService", "✅ Payload listo en ${payloadDuration}ms. Peso total enviado: ${requestBody.contentLength() / 1024} KB")
 
+                // 3. Petición HTTP
                 val request = Request.Builder()
-                    .url("$baseUrl?key=$apiKey")
+                    .url(baseUrl)
+                    .addHeader("x-goog-api-key", apiKey)
+                    .addHeader("Api-Revision", "2026-05-20")
                     .post(requestBody)
-                    .addHeader("Content-Type", "application/json")
                     .build()
 
+                Log.d("GeminiService", "📡 [PASO 4] Preparando solicitud HTTP a Gemini...")
+                Log.d("GeminiService", "URL: ${request.url}")
+                Log.d("GeminiService", "Method: ${request.method}")
+                Log.d("GeminiService", "Headers:\n${request.headers}")
+                Log.d("GeminiService", "Payload Start: ${payload.take(500)}...")
+
+                Log.d("GeminiService", "📡 [PASO 4.1] Enviando solicitud HTTP POST... (Esperando respuesta)")
+                val netStartTime = System.currentTimeMillis()
+
                 val response = client.newCall(request).execute()
+
+                val netDuration = System.currentTimeMillis() - netStartTime
+                Log.d("GeminiService", "⚡ HTTP Status recibido: ${response.code} en ${netDuration}ms (${netDuration / 1000.0}s)")
+
+                // 4. Lectura de Respuesta
+                val readStartTime = System.currentTimeMillis()
+                Log.d("GeminiService", "📥 [PASO 5] Leyendo cuerpo de respuesta...")
                 val responseBody = response.body?.string() ?: ""
+                val readDuration = System.currentTimeMillis() - readStartTime
+                Log.d("GeminiService", "✅ Respuesta leída en ${readDuration}ms. Tamaño recibido: ${responseBody.length} caracteres")
 
                 if (!response.isSuccessful) {
+                    Log.e("GeminiService", "❌ Error API (${response.code}): $responseBody")
                     return@withContext Result.failure(
-                        Exception("Error de la API de Gemini (${response.code}): $responseBody")
+                        Exception("Error de la API de Gemini (${response.code})")
                     )
                 }
 
+                // 5. Parseo JSON
+                val parseStartTime = System.currentTimeMillis()
+                Log.d("GeminiService", "🔍 [PASO 6] Extrayendo e interpretando JSON de la factura...")
                 val items = parseGeminiResponse(responseBody)
+                val parseDuration = System.currentTimeMillis() - parseStartTime
+
+                val totalDuration = System.currentTimeMillis() - totalStartTime
+                Log.d("GeminiService", "🎉 [COMPLETADO] Proceso finalizado en ${totalDuration}ms (${totalDuration / 1000.0}s). Ítems extraídos: ${items.size}")
+
                 Result.success(items)
 
+            } catch (e: SocketTimeoutException) {
+                val elapsed = System.currentTimeMillis() - totalStartTime
+                Log.e("GeminiService", "⏳ TIMEOUT de red después de ${elapsed}ms (${elapsed / 1000.0}s). La conexión tardó demasiado.", e)
+                Result.failure(e)
+            } catch (e: IOException) {
+                Log.e("GeminiService", "🔌 Error de E/S o conectividad a la red", e)
+                Result.failure(e)
             } catch (e: Exception) {
+                Log.e("GeminiService", "💥 Excepción inesperada durante el proceso", e)
                 Result.failure(e)
             }
         }
 
-    /**
-     * Construye el JSON de solicitud para Gemini con imagen + prompt de extracción.
-     * El prompt pide explícitamente JSON estructurado sin texto adicional.
-     */
     private fun buildGeminiPayload(base64Image: String, mimeType: String): String {
         val prompt = """
             Analiza esta imagen de una factura comercial o recibo de venta.
@@ -117,58 +162,31 @@ class GeminiService {
             Si la imagen no contiene una factura legible, responde: {"items": []}
         """.trimIndent()
 
-        return """
-            {
-              "contents": [
-                {
-                  "parts": [
-                    {
-                      "inline_data": {
-                        "mime_type": "$mimeType",
-                        "data": "$base64Image"
-                      }
-                    },
-                    {
-                      "text": ${gson.toJson(prompt)}
-                    }
-                  ]
-                }
-              ],
-              "generationConfig": {
-                "temperature": 0.1,
-                "topP": 0.8,
-                "maxOutputTokens": 2048
-              }
-            }
-        """.trimIndent()
+        val payloadMap = mapOf(
+            "model" to "gemini-3.6-flash",
+            "input" to listOf(
+                mapOf(
+                    "type" to "text",
+                    "text" to prompt
+                ),
+                mapOf(
+                    "type" to "image",
+                    "data" to base64Image,
+                    "mime_type" to mimeType
+                )
+            )
+        )
+
+        return gson.toJson(payloadMap)
     }
 
-    /**
-     * Parsea la respuesta de texto de Gemini para extraer la lista de ítems.
-     *
-     * Estrategia robusta:
-     *  1. Extrae el texto de la respuesta.
-     *  2. Busca el bloque JSON usando regex (maneja casos donde Gemini agrega texto extra).
-     *  3. Parsea con Gson, captura excepciones de parseo.
-     *  4. Ítems con campos nulos se convierten a defaults editables por el usuario.
-     */
     private fun parseGeminiResponse(responseBody: String): List<ParsedInvoiceItemDto> {
         return try {
             val responseJson = gson.fromJson(responseBody, JsonObject::class.java)
 
-            // Extraer texto de la primera candidata
-            val text = responseJson
-                .getAsJsonArray("candidates")
-                ?.get(0)?.asJsonObject
-                ?.getAsJsonObject("content")
-                ?.getAsJsonArray("parts")
-                ?.get(0)?.asJsonObject
-                ?.get("text")?.asString
-                ?: return emptyList()
+            val text = extractTextFromResponse(responseJson) ?: return emptyList()
 
-            // Buscar el JSON dentro del texto (Gemini a veces agrega explicaciones)
             val jsonText = extractJsonFromText(text) ?: return emptyList()
-
             val parsedJson = gson.fromJson(jsonText, JsonObject::class.java)
             val itemsArray = parsedJson.getAsJsonArray("items") ?: return emptyList()
 
@@ -184,27 +202,50 @@ class GeminiService {
                             ?.asDouble?.let { BigDecimal(it.toString()) }
                     )
                 } catch (e: Exception) {
-                    // Si un ítem individual falla el parseo, lo saltamos pero no fallamos todo
                     null
                 }
             }
-        } catch (e: JsonSyntaxException) {
-            emptyList()
         } catch (e: Exception) {
+            Log.e("GeminiService", "Error parseando la respuesta JSON", e)
             emptyList()
         }
     }
 
-    /**
-     * Extrae el primer bloque JSON válido de un texto que puede contener
-     * markdown u otro texto alrededor.
-     */
+    private fun extractTextFromResponse(responseJson: JsonObject): String? {
+        // Formato para /v1beta/interactions (Gemini 3.5)
+        responseJson.getAsJsonArray("steps")?.let { stepsArray ->
+            for (elem in stepsArray) {
+                val stepObj = elem.asJsonObject
+                if (stepObj.has("type") && stepObj.get("type").asString == "model_output") {
+                    stepObj.getAsJsonArray("content")?.let { contentArray ->
+                        for (contentElem in contentArray) {
+                            val contentObj = contentElem.asJsonObject
+                            if (contentObj.has("type") && contentObj.get("type").asString == "text" && contentObj.has("text")) {
+                                return contentObj.get("text").asString
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Formatos legacy o alternativos por si acaso
+        responseJson.getAsJsonArray("candidates")
+            ?.get(0)?.asJsonObject
+            ?.getAsJsonObject("content")
+            ?.getAsJsonArray("parts")
+            ?.get(0)?.asJsonObject
+            ?.get("text")?.asString?.let { return it }
+
+        responseJson.get("text")?.asString?.let { return it }
+
+        return null
+    }
+
     private fun extractJsonFromText(text: String): String? {
-        // Intentar extraer de bloques ```json ... ``` o ``` ... ```
         val markdownRegex = Regex("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```")
         markdownRegex.find(text)?.groupValues?.get(1)?.let { return it }
 
-        // Buscar el primer { que abre el JSON de items y el último }
         val startIndex = text.indexOf('{')
         val endIndex = text.lastIndexOf('}')
         if (startIndex != -1 && endIndex > startIndex) {

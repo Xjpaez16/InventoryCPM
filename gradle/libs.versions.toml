@@ -31,7 +31,6 @@ coil = "2.7.0"
 
 # Coroutines
 coroutines = "1.8.1"
-roomCompiler = "2.8.4"
 
 [libraries]
 # Core
@@ -82,7 +81,6 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 
 # Coroutines
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "roomCompiler" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

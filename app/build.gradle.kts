@@ -20,9 +20,13 @@ android {
         }
     }
 
+    configurations.all {
+        exclude(group = "com.intellij", module = "annotations")
+    }
+
     defaultConfig {
         applicationId = "com.example.inventorycpm"
-        minSdk = 31
+        minSdk = 30
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -62,7 +66,6 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.room.compiler)
 
     // Compose BOM — manages all Compose versions consistently
     val composeBom = platform(libs.androidx.compose.bom)
