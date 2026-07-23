@@ -16,16 +16,20 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.YearMonth
 
 data class HistorialUiState(
     val cierres: List<CierreDia> = emptyList(),
     val diasConFacturas: List<LocalDate> = emptyList(),
+    val availableMonths: List<YearMonth> = emptyList(),
+    val selectedMonth: YearMonth? = null,
     val isLoading: Boolean = true
 )
 
 data class HistorialDiaUiState(
     val fecha: LocalDate = LocalDate.now(),
     val facturas: List<Factura> = emptyList(),
+    val isCerrado: Boolean = false,
     val isLoading: Boolean = true
 )
 
@@ -35,14 +39,26 @@ class HistorialViewModel(application: Application) : AndroidViewModel(applicatio
     private val facturaRepo = FacturaRepository(db.facturaDao(), db.itemFacturaDao())
     private val cierreRepo = CierreDiaRepository(db.cierreDiaDao())
 
+    private val _selectedMonth = MutableStateFlow<YearMonth?>(null)
+
     val historialState: StateFlow<HistorialUiState> =
         kotlinx.coroutines.flow.combine(
             cierreRepo.getAllCierres(),
-            facturaRepo.getDiasConFacturas()
-        ) { cierres, dias ->
+            facturaRepo.getDiasConFacturas(),
+            _selectedMonth
+        ) { cierres, dias, month ->
+            val allMonths = (cierres.map { YearMonth.from(it.fecha) } + dias.map { YearMonth.from(it) })
+                .distinct()
+                .sortedDescending()
+
+            val filteredCierres = if (month != null) cierres.filter { YearMonth.from(it.fecha) == month } else cierres
+            val filteredDias = if (month != null) dias.filter { YearMonth.from(it) == month } else dias
+
             HistorialUiState(
-                cierres = cierres,
-                diasConFacturas = dias,
+                cierres = filteredCierres,
+                diasConFacturas = filteredDias,
+                availableMonths = allMonths,
+                selectedMonth = month,
                 isLoading = false
             )
         }.stateIn(
@@ -54,17 +70,29 @@ class HistorialViewModel(application: Application) : AndroidViewModel(applicatio
     private val _diaState = MutableStateFlow(HistorialDiaUiState())
     val diaState: StateFlow<HistorialDiaUiState> = _diaState.asStateFlow()
 
+    fun setMonthFilter(month: YearMonth?) {
+        _selectedMonth.value = month
+    }
+
     fun loadFacturasDelDia(fecha: LocalDate) {
         viewModelScope.launch {
+            val cierre = cierreRepo.getCierreDiaOnce(fecha)
             facturaRepo.getFacturasDelDia(fecha).collect { facturas ->
                 _diaState.update { state ->
                     state.copy(
                         fecha = fecha,
                         facturas = facturas,
+                        isCerrado = cierre != null,
                         isLoading = false
                     )
                 }
             }
+        }
+    }
+
+    fun deleteFactura(facturaId: Long) {
+        viewModelScope.launch {
+            facturaRepo.deleteFacturaConItems(facturaId)
         }
     }
 }

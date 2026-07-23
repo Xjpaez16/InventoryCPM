@@ -50,8 +50,6 @@ class GeminiService {
         withContext(Dispatchers.IO) {
             val totalStartTime = System.currentTimeMillis()
             try {
-                Log.d("GeminiService", "🚀 [PASO 1] Iniciando escaneo. Archivo: ${imageFile.name} (${imageFile.length() / 1024} KB)")
-
                 if (apiKey.isBlank()) {
                     Log.e("GeminiService", "❌ API key vacía")
                     return@withContext Result.failure(
@@ -60,14 +58,10 @@ class GeminiService {
                 }
 
                 // 1. Optimización e imagen a Base64
-                val imgStartTime = System.currentTimeMillis()
-                Log.d("GeminiService", "🖼️ [PASO 2] Procesando e imprimiendo imagen...")
                 val bytes = ImageUtil.resizeAndCompressImage(imageFile)
                     ?: imageFile.readBytes()
 
                 val base64Image = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                val imgDuration = System.currentTimeMillis() - imgStartTime
-                Log.d("GeminiService", "✅ Base64 completado en ${imgDuration}ms. Tamaño: ${base64Image.length / 1024} KB (${base64Image.length} caracteres)")
 
                 val mimeType = when (imageFile.extension.lowercase()) {
                     "png" -> "image/png"
@@ -76,12 +70,8 @@ class GeminiService {
                 }
 
                 // 2. Construcción de Payload
-                val payloadStartTime = System.currentTimeMillis()
-                Log.d("GeminiService", "📦 [PASO 3] Construyendo payload JSON...")
                 val payload = buildGeminiPayload(base64Image, mimeType)
                 val requestBody = payload.toRequestBody("application/json".toMediaType())
-                val payloadDuration = System.currentTimeMillis() - payloadStartTime
-                Log.d("GeminiService", "✅ Payload listo en ${payloadDuration}ms. Peso total enviado: ${requestBody.contentLength() / 1024} KB")
 
                 // 3. Petición HTTP
                 val request = Request.Builder()
@@ -91,26 +81,10 @@ class GeminiService {
                     .post(requestBody)
                     .build()
 
-                Log.d("GeminiService", "📡 [PASO 4] Preparando solicitud HTTP a Gemini...")
-                Log.d("GeminiService", "URL: ${request.url}")
-                Log.d("GeminiService", "Method: ${request.method}")
-                Log.d("GeminiService", "Headers:\n${request.headers}")
-                Log.d("GeminiService", "Payload Start: ${payload.take(500)}...")
-
-                Log.d("GeminiService", "📡 [PASO 4.1] Enviando solicitud HTTP POST... (Esperando respuesta)")
-                val netStartTime = System.currentTimeMillis()
-
                 val response = client.newCall(request).execute()
 
-                val netDuration = System.currentTimeMillis() - netStartTime
-                Log.d("GeminiService", "⚡ HTTP Status recibido: ${response.code} en ${netDuration}ms (${netDuration / 1000.0}s)")
-
                 // 4. Lectura de Respuesta
-                val readStartTime = System.currentTimeMillis()
-                Log.d("GeminiService", "📥 [PASO 5] Leyendo cuerpo de respuesta...")
                 val responseBody = response.body?.string() ?: ""
-                val readDuration = System.currentTimeMillis() - readStartTime
-                Log.d("GeminiService", "✅ Respuesta leída en ${readDuration}ms. Tamaño recibido: ${responseBody.length} caracteres")
 
                 if (!response.isSuccessful) {
                     Log.e("GeminiService", "❌ Error API (${response.code}): $responseBody")
@@ -120,13 +94,7 @@ class GeminiService {
                 }
 
                 // 5. Parseo JSON
-                val parseStartTime = System.currentTimeMillis()
-                Log.d("GeminiService", "🔍 [PASO 6] Extrayendo e interpretando JSON de la factura...")
                 val items = parseGeminiResponse(responseBody)
-                val parseDuration = System.currentTimeMillis() - parseStartTime
-
-                val totalDuration = System.currentTimeMillis() - totalStartTime
-                Log.d("GeminiService", "🎉 [COMPLETADO] Proceso finalizado en ${totalDuration}ms (${totalDuration / 1000.0}s). Ítems extraídos: ${items.size}")
 
                 Result.success(items)
 

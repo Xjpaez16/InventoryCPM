@@ -74,6 +74,11 @@ class FacturaRepository(
         facturaDao.updateFactura(factura.toEntity())
     }
 
+    suspend fun deleteFacturaConItems(facturaId: Long) {
+        itemFacturaDao.deleteItemsByFacturaId(facturaId)
+        facturaDao.deleteFactura(facturaId)
+    }
+
     suspend fun getTotalAjustadoConfirmadasDelDia(fecha: LocalDate): BigDecimal {
         val centavos = facturaDao.getTotalAjustadoConfirmadasByFecha(fecha)
         return BigDecimal(centavos).divide(BigDecimal(100))

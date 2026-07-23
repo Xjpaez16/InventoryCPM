@@ -34,9 +34,31 @@ fun HistorialDiaScreen(
     viewModel: HistorialViewModel = viewModel()
 ) {
     val uiState by viewModel.diaState.collectAsStateWithLifecycle()
+    var deleteFacturaId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(fecha) {
         viewModel.loadFacturasDelDia(fecha)
+    }
+
+    if (deleteFacturaId != null) {
+        AlertDialog(
+            onDismissRequest = { deleteFacturaId = null },
+            title = { Text("Eliminar factura") },
+            text = { Text("¿Estás seguro de que deseas eliminar esta factura de forma permanente? Esta acción no se puede deshacer.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteFacturaId?.let { id -> viewModel.deleteFactura(id) }
+                    deleteFacturaId = null
+                }) {
+                    Text("Eliminar", color = ErrorRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteFacturaId = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -138,7 +160,9 @@ fun HistorialDiaScreen(
             items(uiState.facturas) { factura ->
                 FacturaHistorialCard(
                     factura = factura,
-                    onClick = { onNavigateToDetalle(factura.id) }
+                    isCerrado = uiState.isCerrado,
+                    onClick = { onNavigateToDetalle(factura.id) },
+                    onDelete = { deleteFacturaId = factura.id }
                 )
             }
         }
@@ -148,7 +172,9 @@ fun HistorialDiaScreen(
 @Composable
 private fun FacturaHistorialCard(
     factura: Factura,
-    onClick: () -> Unit
+    isCerrado: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -210,12 +236,18 @@ private fun FacturaHistorialCard(
                 }
             }
 
-            Icon(
-                Icons.Default.ChevronRight,
-                null,
-                tint = OnSurfaceVariant,
-                modifier = Modifier.size(18.dp).padding(start = 4.dp)
-            )
+            if (!isCerrado) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Eliminar", tint = ErrorRed)
+                }
+            } else {
+                Icon(
+                    Icons.Default.ChevronRight,
+                    null,
+                    tint = OnSurfaceVariant,
+                    modifier = Modifier.size(18.dp).padding(start = 4.dp)
+                )
+            }
         }
     }
 }

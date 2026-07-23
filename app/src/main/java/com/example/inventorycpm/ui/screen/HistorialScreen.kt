@@ -23,7 +23,10 @@ import com.example.inventorycpm.ui.viewmodel.HistorialViewModel
 import com.example.inventorycpm.util.CurrencyFormatter
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,37 +53,63 @@ fun HistorialScreen(
             )
         }
     ) { paddingValues ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-            } else if (uiState.cierres.isEmpty() && uiState.diasConFacturas.isEmpty()) {
-                EmptyState(
-                    icon = Icons.Default.History,
-                    title = "Sin historial aún",
-                    subtitle = "Los días con facturas y cierres aparecerán aquí",
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            } else {
-                // Combinar cierres y días con facturas para el listado
-                val diasConCierre = uiState.cierres.map { it.fecha }.toSet()
-                val todosLosDias = (diasConCierre + uiState.diasConFacturas).sortedDescending()
-
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+            if (uiState.availableMonths.isNotEmpty()) {
+                ScrollableTabRow(
+                    selectedTabIndex = if (uiState.selectedMonth == null) 0 else uiState.availableMonths.indexOf(uiState.selectedMonth) + 1,
+                    edgePadding = 16.dp,
+                    containerColor = SurfaceDark,
+                    divider = {}
                 ) {
-                    items(todosLosDias) { fecha ->
-                        val cierre = uiState.cierres.find { it.fecha == fecha }
-                        DiaHistorialCard(
-                            fecha = fecha,
-                            cierre = cierre,
-                            onClick = { onNavigateToDia(fecha.toString()) }
+                    Tab(
+                        selected = uiState.selectedMonth == null,
+                        onClick = { viewModel.setMonthFilter(null) },
+                        text = { Text("Todos") }
+                    )
+                    uiState.availableMonths.forEach { month ->
+                        val monthName = month.month.getDisplayName(TextStyle.FULL, Locale("es", "ES")).replaceFirstChar { it.uppercase() }
+                        val label = "$monthName ${month.year}"
+                        Tab(
+                            selected = uiState.selectedMonth == month,
+                            onClick = { viewModel.setMonthFilter(month) },
+                            text = { Text(label) }
                         )
+                    }
+                }
+            }
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (uiState.isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                } else if (uiState.cierres.isEmpty() && uiState.diasConFacturas.isEmpty()) {
+                    EmptyState(
+                        icon = Icons.Default.History,
+                        title = if (uiState.selectedMonth == null) "Sin historial aún" else "Sin datos en este mes",
+                        subtitle = "Los días con facturas y cierres aparecerán aquí",
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                } else {
+                    // Combinar cierres y días con facturas para el listado
+                    val diasConCierre = uiState.cierres.map { it.fecha }.toSet()
+                    val todosLosDias = (diasConCierre + uiState.diasConFacturas).sortedDescending()
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(todosLosDias) { fecha ->
+                            val cierre = uiState.cierres.find { it.fecha == fecha }
+                            DiaHistorialCard(
+                                fecha = fecha,
+                                cierre = cierre,
+                                onClick = { onNavigateToDia(fecha.toString()) }
+                            )
+                        }
                     }
                 }
             }
